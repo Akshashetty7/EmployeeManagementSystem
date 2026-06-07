@@ -1,0 +1,41 @@
+@model EmployeeManagementSystem.Models.Department
+@{ ViewData["Title"] = "New Department"; }
+
+<div class="d-flex align-items-center gap-2 mb-3">
+    <a asp-action="Index" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i></a>
+    <h5 class="mb-0 fw-bold" style="color:#1e3a5f">Create Department</h5>
+</div>
+<div class="row justify-content-start"><div class="col-lg-5">
+<form asp-action="Create" method="post">
+    @Html.AntiForgeryToken()
+    <div class="card">
+        <div class="card-body">
+            <div class="mb-3">
+                <label asp-for="Name" class="form-label small fw-semibold"></label>
+                <input asp-for="Name" class="form-control form-control-sm" />
+                <span asp-validation-for="Name" class="text-danger small"></span>
+            </div>
+            <div class="mb-3">
+                <label asp-for="Description" class="form-label small fw-semibold"></label>
+                <textarea asp-for="Description" class="form-control form-control-sm" rows="2"></textarea>
+            </div>
+            <div class="mb-3">
+                <label asp-for="Location" class="form-label small fw-semibold"></label>
+                <input asp-for="Location" class="form-control form-control-sm" placeholder="e.g. Floor 2" />
+            </div>
+            <div class="mb-3">
+                <div class="form-check">
+                    <input asp-for="IsActive" class="form-check-input" />
+                    <label asp-for="IsActive" class="form-check-label small">Active</label>
+                </div>
+            </div>
+            <div class="d-grid gap-2">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-save me-2"></i>Save</button>
+                <a asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </div>
+    </div>
+</form>
+</div></div>
+
+@section Scripts { @{await Html.RenderPartialAsync("_ValidationScriptsPartial");} }

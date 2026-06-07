@@ -1,0 +1,132 @@
+@model EmployeeManagementSystem.Models.ViewModels.EmployeeListViewModel
+@{ ViewData["Title"] = "Employees"; }
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h5 class="mb-0 fw-bold" style="color:#1e3a5f">Employee Directory</h5>
+        <small class="text-muted">@Model.TotalCount records found</small>
+    </div>
+    <div class="d-flex gap-2">
+        @if (User.IsInRole("Admin") || User.IsInRole("HR"))
+        {
+            <a asp-action="ExportExcel" asp-route-search="@Model.SearchTerm" asp-route-deptId="@Model.DepartmentFilter" asp-route-status="@Model.StatusFilter"
+               class="btn btn-success btn-sm"><i class="bi bi-file-earmark-excel me-1"></i>Export</a>
+            <a asp-action="Create" class="btn btn-primary btn-sm"><i class="bi bi-person-plus me-1"></i>Add Employee</a>
+        }
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input name="search" value="@Model.SearchTerm" class="form-control" placeholder="Search name, email, code..." />
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select name="deptId" class="form-select form-select-sm">
+                    <option value="">All Departments</option>
+                    @foreach (var d in Model.Departments)
+                    {
+                        <option value="@d.Id" selected="@(Model.DepartmentFilter == d.Id)">@d.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">All Statuses</option>
+                    <option value="Active" selected="@(Model.StatusFilter == "Active")">Active</option>
+                    <option value="OnLeave" selected="@(Model.StatusFilter == "OnLeave")">On Leave</option>
+                    <option value="Resigned" selected="@(Model.StatusFilter == "Resigned")">Resigned</option>
+                    <option value="Terminated" selected="@(Model.StatusFilter == "Terminated")">Terminated</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+                <a asp-action="Index" class="btn btn-outline-secondary btn-sm">Clear</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Code</th>
+                        <th>Department</th>
+                        <th>Job Title</th>
+                        <th>Join Date</th>
+                        <th>Salary</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var emp in Model.Employees)
+                {
+                    var statusClass = emp.Status switch {
+                        EmployeeManagementSystem.Models.EmploymentStatus.Active => "bg-success-subtle text-success",
+                        EmployeeManagementSystem.Models.EmploymentStatus.OnLeave => "bg-warning-subtle text-warning",
+                        EmployeeManagementSystem.Models.EmploymentStatus.Resigned => "bg-secondary-subtle text-secondary",
+                        _ => "bg-danger-subtle text-danger"
+                    };
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="avatar">@emp.FirstName[0]</div>
+                                <div>
+                                    <div class="fw-semibold small">@emp.FullName</div>
+                                    <div class="text-muted" style="font-size:11px">@emp.Email</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td><span class="badge bg-light text-dark border">@emp.EmployeeCode</span></td>
+                        <td><span class="badge bg-primary-subtle text-primary">@emp.Department?.Name</span></td>
+                        <td class="small text-muted">@emp.JobTitle</td>
+                        <td class="small text-muted">@emp.JoinDate.ToString("dd MMM yyyy")</td>
+                        <td class="small fw-semibold">₹@(emp.BaseSalary.ToString("N0"))</td>
+                        <td><span class="status-badge @statusClass">@emp.Status</span></td>
+                        <td>
+                            <div class="d-flex gap-1">
+                                <a asp-action="Details" asp-route-id="@emp.Id" class="btn btn-sm btn-outline-primary" title="View"><i class="bi bi-eye"></i></a>
+                                @if (User.IsInRole("Admin") || User.IsInRole("HR") || User.IsInRole("Manager"))
+                                {
+                                    <a asp-action="Edit" asp-route-id="@emp.Id" class="btn btn-sm btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
+                                }
+                                @if (User.IsInRole("Admin"))
+                                {
+                                    <a asp-action="Delete" asp-route-id="@emp.Id" class="btn btn-sm btn-outline-danger" title="Terminate"><i class="bi bi-person-x"></i></a>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        @if (Model.TotalPages > 1)
+        {
+            <div class="d-flex justify-content-between align-items-center px-3 py-2 border-top">
+                <small class="text-muted">Showing @((Model.CurrentPage - 1) * Model.PageSize + 1)–@(Math.Min(Model.CurrentPage * Model.PageSize, Model.TotalCount)) of @Model.TotalCount</small>
+                <nav>
+                    <ul class="pagination pagination-sm mb-0">
+                        @for (int i = 1; i <= Model.TotalPages; i++)
+                        {
+                            <li class="page-item @(i == Model.CurrentPage ? "active" : "")">
+                                <a class="page-link" asp-action="Index" asp-route-page="@i" asp-route-search="@Model.SearchTerm" asp-route-deptId="@Model.DepartmentFilter" asp-route-status="@Model.StatusFilter">@i</a>
+                            </li>
+                        }
+                    </ul>
+                </nav>
+            </div>
+        }
+    </div>
+</div>

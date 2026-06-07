@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] – EMS</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <style>
+        :root {
+            --sidebar-w: 248px;
+            --primary:   #111827;
+            --accent:    #2e86de;
+            --sidebar-bg:#0d1b2a;
+            --nav-hover: rgba(255,255,255,0.07);
+            --nav-active-bg: rgba(46,134,222,0.18);
+            --nav-active-cl: #60a5fa;
+            --border:    #e5e7eb;
+            --surface:   #f8fafc;
+        }
+
+        * { box-sizing: border-box; }
+        body { background: #f1f5f9; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; margin: 0; }
+
+        /* ── SIDEBAR ── */
+        .sidebar {
+            width: var(--sidebar-w);
+            background: var(--sidebar-bg);
+            min-height: 100vh;
+            position: fixed;
+            top: 0; left: 0;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid rgba(255,255,255,0.04);
+        }
+
+        /* subtle grid pattern on sidebar */
+        .sidebar::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(46,134,222,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(46,134,222,0.03) 1px, transparent 1px);
+            background-size: 32px 32px;
+            pointer-events: none;
+        }
+
+        .sidebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 1.2rem 1.1rem 1rem;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            position: relative;
+            z-index: 1;
+        }
+
+        .sidebar-brand-icon {
+            width: 34px;
+            height: 34px;
+            background: linear-gradient(135deg, #2e86de, #6366f1);
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: #fff;
+            flex-shrink: 0;
+        }
+
+        .sidebar-brand-text strong {
+            display: block;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+        }
+
+        .sidebar-brand-text span {
+            color: rgba(255,255,255,0.35);
+            font-size: 10px;
+            letter-spacing: .3px;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: .6rem 0;
+            overflow-y: auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .nav-section-label {
+            padding: .8rem 1.1rem .3rem;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: rgba(255,255,255,0.25);
+        }
+
+        .sidebar-nav .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: .52rem 1.1rem;
+            margin: 1px 8px;
+            border-radius: 7px;
+            font-size: 13.5px;
+            color: rgba(255,255,255,0.6);
+            text-decoration: none;
+            transition: background .15s, color .15s;
+            position: relative;
+        }
+
+        .sidebar-nav .nav-link i {
+            font-size: 15px;
+            width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .sidebar-nav .nav-link:hover {
+            background: var(--nav-hover);
+            color: rgba(255,255,255,0.88);
+        }
+
+        .sidebar-nav .nav-link.active {
+            background: var(--nav-active-bg);
+            color: var(--nav-active-cl);
+            font-weight: 600;
+        }
+
+        .sidebar-nav .nav-link.active i { color: var(--nav-active-cl); }
+
+        .sidebar-footer {
+            padding: .75rem 1.1rem;
+            border-top: 1px solid rgba(255,255,255,0.07);
+            position: relative;
+            z-index: 1;
+        }
+
+        .sidebar-footer small { color: rgba(255,255,255,0.2); font-size: 11px; }
+
+        /* ── MAIN ── */
+        .main-wrap { margin-left: var(--sidebar-w); min-height: 100vh; display: flex; flex-direction: column; }
+
+        /* ── TOPBAR ── */
+        .topbar {
+            background: #fff;
+            border-bottom: 1px solid var(--border);
+            padding: 0 1.6rem;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        }
+
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+
+        .breadcrumb-trail {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+        }
+
+        .breadcrumb-trail .bc-home { color: #9ca3af; font-size: 15px; }
+        .breadcrumb-trail .bc-sep  { color: #d1d5db; font-size: 12px; }
+        .breadcrumb-trail .bc-page { color: #111827; font-weight: 600; }
+
+        .topbar-right { display: flex; align-items: center; gap: 10px; }
+
+        .role-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: .3px;
+        }
+
+        .avatar-btn {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #1e3a5f, #2e86de);
+            border: none;
+            color: #fff;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity .2s;
+        }
+
+        .avatar-btn:hover { opacity: .85; }
+
+        .user-dropdown .dropdown-item { font-size: 13px; }
+
+        /* ── CONTENT ── */
+        .content-area {
+            flex: 1;
+            padding: 1.6rem 1.8rem;
+        }
+
+        /* ── CARDS ── */
+        .card {
+            border: 1px solid #e9edf2;
+            border-radius: 12px;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+            background: #fff;
+        }
+
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid #f0f2f5;
+            font-weight: 600;
+            font-size: 14px;
+            color: #111827;
+            padding: .9rem 1.1rem;
+        }
+
+        /* ── TABLES ── */
+        .table > thead > tr > th {
+            background: #f8fafc;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .6px;
+            color: #6b7280;
+            border-bottom: 1px solid #e9edf2;
+            padding: .7rem .9rem;
+        }
+
+        .table > tbody > tr > td { padding: .7rem .9rem; vertical-align: middle; }
+        .table-hover tbody tr:hover { background: #f9fafc; }
+
+        /* ── MISC ── */
+        .stat-card { border-radius: 12px; padding: 1.3rem 1.4rem; color: #fff; border: none; }
+        .avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg,#1e3a5f,#2e86de); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+        .status-badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge-role { font-size: 10px; padding: 3px 8px; border-radius: 20px; font-weight: 600; }
+        .page-heading { font-size: 1.05rem; font-weight: 700; color: #111827; margin: 0; }
+        .page-sub { font-size: 12px; color: #6b7280; }
+
+        /* Alert flash */
+        .flash-alert { border-radius: 10px; font-size: 13.5px; border: none; }
+        .flash-alert.alert-success { background: #f0fdf4; color: #166534; border-left: 3px solid #22c55e; }
+        .flash-alert.alert-danger  { background: #fef2f2; color: #991b1b; border-left: 3px solid #ef4444; }
+    </style>
+</head>
+<body>
+@if (User.Identity?.IsAuthenticated == true)
+{
+    var ctrl = ViewContext.RouteData.Values["controller"]?.ToString();
+    var userRole = User.IsInRole("Admin") ? "Admin" : User.IsInRole("HR") ? "HR" : User.IsInRole("Manager") ? "Manager" : "Employee";
+    var (roleClass, roleIcon) = userRole switch {
+            "Admin"    => ("bg-danger bg-opacity-10 text-danger",    "bi-shield-fill"),
+            "HR"       => ("bg-warning bg-opacity-10 text-warning",   "bi-person-badge"),
+            "Manager"  => ("bg-primary bg-opacity-10 text-primary",   "bi-briefcase"),
+            _          => ("bg-success bg-opacity-10 text-success",   "bi-person")
+        };
+
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="sidebar-brand-icon"><i class="bi bi-building-check"></i></div>
+            <div class="sidebar-brand-text">
+                <strong>EMS</strong>
+                <span>Employee Management</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section-label">Overview</div>
+            <a asp-controller="Dashboard" asp-action="Index"
+               class="nav-link @(ctrl == "Dashboard" ? "active" : "")">
+                <i class="bi bi-squares-fill"></i> Dashboard
+            </a>
+
+            <div class="nav-section-label">People</div>
+            <a asp-controller="Employees" asp-action="Index"
+               class="nav-link @(ctrl == "Employees" ? "active" : "")">
+                <i class="bi bi-people"></i> Employees
+            </a>
+            @if (User.IsInRole("Admin") || User.IsInRole("HR"))
+            {
+                <a asp-controller="Departments" asp-action="Index"
+                   class="nav-link @(ctrl == "Departments" ? "active" : "")">
+                    <i class="bi bi-diagram-3"></i> Departments
+                </a>
+            }
+
+            <div class="nav-section-label">Time Off</div>
+            <a asp-controller="Leave" asp-action="Index"
+               class="nav-link @(ctrl == "Leave" ? "active" : "")">
+                <i class="bi bi-calendar-check"></i> Leave Requests
+            </a>
+            <a asp-controller="Leave" asp-action="Apply" class="nav-link">
+                <i class="bi bi-calendar-plus"></i> Apply for Leave
+            </a>
+
+            @if (User.IsInRole("Admin") || User.IsInRole("HR"))
+            {
+                <div class="nav-section-label">Reports</div>
+                <a asp-controller="Employees" asp-action="ExportExcel" class="nav-link">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> Employee Report
+                </a>
+                <a asp-controller="Leave" asp-action="ExportExcel" class="nav-link">
+                    <i class="bi bi-file-earmark-bar-graph"></i> Leave Report
+                </a>
+            }
+        </nav>
+
+        <div class="sidebar-footer">
+            <small>EMS &copy; 2025 &middot; v1.0</small>
+        </div>
+    </aside>
+
+    <div class="main-wrap">
+        <header class="topbar">
+            <div class="topbar-left">
+                <div class="breadcrumb-trail">
+                    <i class="bi bi-house bc-home"></i>
+                    <i class="bi bi-chevron-right bc-sep"></i>
+                    <span class="bc-page">@(ViewData["Title"] ?? "Dashboard")</span>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <span class="role-chip @roleClass">
+                    <i class="bi @roleIcon"></i> @userRole
+                </span>
+                <div class="dropdown">
+                    <button class="avatar-btn dropdown-toggle" data-bs-toggle="dropdown"
+                            title="@User.Identity!.Name"
+                            style="border:none;outline:none">
+                        @User.Identity!.Name![0].ToString().ToUpper()
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm border user-dropdown" style="min-width:200px;border-radius:10px">
+                        <li class="px-3 py-2">
+                            <div style="font-size:13px;font-weight:600;color:#111827">@User.Identity.Name</div>
+                            <div style="font-size:11px;color:#6b7280">@userRole Account</div>
+                        </li>
+                        <li><hr class="dropdown-divider my-1" /></li>
+                        <li>
+                            <form asp-controller="Account" asp-action="Logout" method="post">
+                                @Html.AntiForgeryToken()
+                                <button type="submit" class="dropdown-item d-flex align-items-center gap-2 text-danger py-2">
+                                    <i class="bi bi-box-arrow-right"></i> Sign Out
+                                </button>
+                            </form>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </header>
+
+        <main class="content-area">
+            @if (TempData["Success"] != null)
+            {
+                <div class="alert flash-alert alert-success alert-dismissible fade show d-flex align-items-center gap-2 mb-3 py-2 px-3">
+                    <i class="bi bi-check-circle-fill"></i>
+                    <span>@TempData["Success"]</span>
+                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+                </div>
+            }
+            @if (TempData["Error"] != null)
+            {
+                <div class="alert flash-alert alert-danger alert-dismissible fade show d-flex align-items-center gap-2 mb-3 py-2 px-3">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <span>@TempData["Error"]</span>
+                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+                </div>
+            }
+            @RenderBody()
+        </main>
+    </div>
+}
+else
+{
+    @RenderBody()
+}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
