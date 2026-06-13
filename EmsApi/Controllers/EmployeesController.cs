@@ -17,11 +17,13 @@ public class EmployeesController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IAuditService _audit;
+    private readonly IEncryptionService _encryption;
 
-    public EmployeesController(ApplicationDbContext ctx, IAuditService audit)
+    public EmployeesController(ApplicationDbContext ctx, IAuditService audit, IEncryptionService encryption)
     {
         _context = ctx;
         _audit = audit;
+        _encryption = encryption;
     }
 
     /// <summary>Get paginated employee list with optional search and filters</summary>
@@ -105,7 +107,9 @@ public class EmployeesController : ControllerBase
             PostalCode = e.PostalCode,
             EmergencyContact = e.EmergencyContact,
             ReportsToName = e.ReportsTo != null ? e.ReportsTo.FirstName + " " + e.ReportsTo.LastName : null,
-            NationalId = e.NationalId
+            NationalId = _encryption.Decrypt(e.NationalId),   // Problem 19: decrypt before sending
+            RowVersion = e.RowVersion != null                  // Problem 18: send to client for concurrency
+                ? Convert.ToBase64String(e.RowVersion) : null
         });
     }
 
@@ -120,12 +124,15 @@ public class EmployeesController : ControllerBase
         if (await _context.Employees.AnyAsync(e => e.Email == dto.Email))
             return BadRequest(new { message = "Email already in use." });
 
-        // Problem 3: NationalId (Aadhaar/PAN) deduplication
-        if (!string.IsNullOrWhiteSpace(dto.NationalId) &&
-            await _context.Employees.AnyAsync(e => e.NationalId == dto.NationalId))
-            return Conflict(new { message = "An employee with this National ID already exists." });
+        // Problem 3 + 19: check hash for duplicate, then encrypt the actual value before saving
+        if (!string.IsNullOrWhiteSpace(dto.NationalId))
+        {
+            var hash = _encryption.Hash(dto.NationalId);
+            if (await _context.Employees.AnyAsync(e => e.NationalIdHash == hash))
+                return Conflict(new { message = "An employee with this National ID already exists." });
+        }
 
-        var emp = MapDtoToEmployee(dto);
+        var emp = MapDtoToEmployee(dto, _encryption);
         emp.CreatedBy = User.FindFirstValue(ClaimTypes.Email);
 
         _context.Employees.Add(emp);
@@ -158,6 +165,23 @@ public class EmployeesController : ControllerBase
 
         var oldSnapshot = new { emp.JobTitle, emp.BaseSalary, emp.Status, emp.DepartmentId };
 
+        // Problem 18: if the client sent a RowVersion, wire it into EF Core's change tracker
+        // as the expected original value. EF Core adds it to the UPDATE WHERE clause.
+        // If another user saved between this GET and PUT, the DB version is different → 0 rows
+        // affected → DbUpdateConcurrencyException → we return 409 instead of silent overwrite.
+        if (!string.IsNullOrEmpty(dto.RowVersion))
+        {
+            try
+            {
+                _context.Entry(emp).Property(x => x.RowVersion).OriginalValue =
+                    Convert.FromBase64String(dto.RowVersion);
+            }
+            catch (FormatException)
+            {
+                return BadRequest(new { message = "Invalid RowVersion format." });
+            }
+        }
+
         emp.FirstName = dto.FirstName;
         emp.LastName = dto.LastName;
         emp.Email = dto.Email;
@@ -177,7 +201,18 @@ public class EmployeesController : ControllerBase
         emp.UpdatedBy = User.FindFirstValue(ClaimTypes.Email);
         emp.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                message = "This record was modified by another user after you opened it. " +
+                          "Please reload the employee and apply your changes again."
+            });
+        }
 
         await _audit.LogAsync("Employee", emp.Id, "Update", oldSnapshot,
             new { emp.JobTitle, emp.BaseSalary, emp.Status, emp.DepartmentId },
@@ -316,11 +351,15 @@ public class EmployeesController : ControllerBase
                 if (await _context.Employees.AnyAsync(e => e.Email == email))
                     throw new InvalidOperationException($"Email '{email}' already in use.");
 
-                // Problem 3: NationalId dedup in bulk import
+                // Problem 3 + 19: hash-based dedup, value will be encrypted before save
                 var nationalId = cols.Length > 15 && !string.IsNullOrWhiteSpace(cols[15].Trim())
                     ? cols[15].Trim() : null;
-                if (nationalId != null && await _context.Employees.AnyAsync(e => e.NationalId == nationalId))
-                    throw new InvalidOperationException($"National ID '{nationalId}' already exists.");
+                if (nationalId != null)
+                {
+                    var hash = _encryption.Hash(nationalId);
+                    if (await _context.Employees.AnyAsync(e => e.NationalIdHash == hash))
+                        throw new InvalidOperationException($"National ID already exists for another employee.");
+                }
 
                 var emp = new Employee
                 {
@@ -339,7 +378,10 @@ public class EmployeesController : ControllerBase
                     City = cols.Length > 12 ? cols[12].Trim() : null,
                     PostalCode = cols.Length > 13 ? cols[13].Trim() : null,
                     EmergencyContact = cols.Length > 14 ? cols[14].Trim() : null,
-                    ReportsToId = cols.Length > 15 && int.TryParse(cols[15].Trim(), out var rid) ? rid : null,
+                    // Problem 19: encrypt NationalId, store hash separately for dedup
+                    NationalId = nationalId != null ? _encryption.Encrypt(nationalId) : null,
+                    NationalIdHash = nationalId != null ? _encryption.Hash(nationalId) : null,
+                    ReportsToId = cols.Length > 16 && int.TryParse(cols[16].Trim(), out var rid) ? rid : null,
                     CreatedBy = User.FindFirstValue(ClaimTypes.Email)
                 };
 
@@ -380,26 +422,32 @@ public class EmployeesController : ControllerBase
         });
     }
 
-    private static Employee MapDtoToEmployee(CreateEmployeeDto dto) => new()
+    private static Employee MapDtoToEmployee(CreateEmployeeDto dto, IEncryptionService encryption)
     {
-        EmployeeCode = dto.EmployeeCode,
-        FirstName = dto.FirstName,
-        LastName = dto.LastName,
-        Email = dto.Email,
-        Phone = dto.Phone,
-        Gender = dto.Gender,
-        DateOfBirth = dto.DateOfBirth,
-        JoinDate = dto.JoinDate,
-        JobTitle = dto.JobTitle,
-        DepartmentId = dto.DepartmentId,
-        BaseSalary = dto.BaseSalary,
-        Address = dto.Address,
-        City = dto.City,
-        PostalCode = dto.PostalCode,
-        EmergencyContact = dto.EmergencyContact,
-        NationalId = string.IsNullOrWhiteSpace(dto.NationalId) ? null : dto.NationalId.Trim(),
-        ReportsToId = dto.ReportsToId,
-    };
+        var rawNationalId = string.IsNullOrWhiteSpace(dto.NationalId) ? null : dto.NationalId.Trim();
+        return new Employee
+        {
+            EmployeeCode = dto.EmployeeCode,
+            FirstName = dto.FirstName,
+            LastName = dto.LastName,
+            Email = dto.Email,
+            Phone = dto.Phone,
+            Gender = dto.Gender,
+            DateOfBirth = dto.DateOfBirth,
+            JoinDate = dto.JoinDate,
+            JobTitle = dto.JobTitle,
+            DepartmentId = dto.DepartmentId,
+            BaseSalary = dto.BaseSalary,
+            Address = dto.Address,
+            City = dto.City,
+            PostalCode = dto.PostalCode,
+            EmergencyContact = dto.EmergencyContact,
+            // Problem 19: store encrypted value + hash separately
+            NationalId = rawNationalId != null ? encryption.Encrypt(rawNationalId) : null,
+            NationalIdHash = rawNationalId != null ? encryption.Hash(rawNationalId) : null,
+            ReportsToId = dto.ReportsToId,
+        };
+    }
 
     // Handles quoted fields with commas inside
     private static string[] ParseCsvLine(string line)

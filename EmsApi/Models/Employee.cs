@@ -40,8 +40,16 @@ public class Employee
     public string? City { get; set; }
     public string? PostalCode { get; set; }
     public string? EmergencyContact { get; set; }
-    public string? NationalId { get; set; }
+    public string? NationalId { get; set; }        // encrypted via DataProtection
+    public string? NationalIdHash { get; set; }    // SHA-256 hash for fast duplicate detection
     public int? ReportsToId { get; set; }
+
+    // Problem 18: EF Core concurrency token — SQL Server auto-increments this on every UPDATE.
+    // If two users fetch the same row and both try to save, the second save detects the mismatch
+    // and throws DbUpdateConcurrencyException instead of silently overwriting.
+    [System.ComponentModel.DataAnnotations.Schema.DatabaseGenerated(
+        System.ComponentModel.DataAnnotations.Schema.DatabaseGeneratedOption.Computed)]
+    public byte[]? RowVersion { get; set; }
     public string? CreatedBy { get; set; }
     public string? UpdatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

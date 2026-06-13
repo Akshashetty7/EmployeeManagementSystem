@@ -57,8 +57,10 @@ builder.Services.AddCors(o => o.AddPolicy("Angular", p =>
      .AllowAnyMethod()));
 
 // ── Services ──────────────────────────────────────────────
+builder.Services.AddDataProtection();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<IEncryptionService, EncryptionService>();
 
 // ── Controllers + Swagger ─────────────────────────────────
 builder.Services.AddControllers();

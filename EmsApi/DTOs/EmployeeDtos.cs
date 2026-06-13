@@ -95,6 +95,9 @@ public class CreateEmployeeDto : IValidatableObject
 public class UpdateEmployeeDto : CreateEmployeeDto
 {
     public EmploymentStatus Status { get; set; }
+    // Problem 18: client must echo back the RowVersion it received on GET.
+    // If another user saved between the GET and this PUT, versions differ → 409 Conflict.
+    public string? RowVersion { get; set; }
 }
 
 public class EmployeeListDto
@@ -125,6 +128,8 @@ public class EmployeeDetailDto : EmployeeListDto
     public string? ReportsToName { get; set; }
     public int DepartmentId { get; set; }
     public string? NationalId { get; set; }
+    // Problem 18: sent to client so they can echo it back on PUT for concurrency check
+    public string? RowVersion { get; set; }
 }
 
 public class PagedResult<T>

@@ -21,8 +21,14 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
         {
             e.HasIndex(x => x.EmployeeCode).IsUnique();
             e.HasIndex(x => x.Email).IsUnique();
-            // Problem 3: Prevent duplicate Aadhaar/PAN — filtered so NULL rows are not compared
-            e.HasIndex(x => x.NationalId).IsUnique().HasFilter("[NationalId] IS NOT NULL");
+
+            // Problem 19: NationalId is now encrypted — raw values are non-deterministic ciphertext,
+            // so we index the SHA-256 hash column instead for reliable duplicate detection.
+            e.HasIndex(x => x.NationalIdHash).IsUnique().HasFilter("[NationalIdHash] IS NOT NULL");
+
+            // Problem 18: RowVersion is the concurrency token.
+            // EF Core adds it to every UPDATE WHERE clause automatically.
+            e.Property(x => x.RowVersion).IsRowVersion();
 
             e.HasOne(x => x.Department)
              .WithMany(d => d.Employees)
