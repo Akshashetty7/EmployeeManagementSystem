@@ -104,7 +104,8 @@ public class EmployeesController : ControllerBase
             City = e.City ?? "",
             PostalCode = e.PostalCode,
             EmergencyContact = e.EmergencyContact,
-            ReportsToName = e.ReportsTo != null ? e.ReportsTo.FirstName + " " + e.ReportsTo.LastName : null
+            ReportsToName = e.ReportsTo != null ? e.ReportsTo.FirstName + " " + e.ReportsTo.LastName : null,
+            NationalId = e.NationalId
         });
     }
 
@@ -118,6 +119,11 @@ public class EmployeesController : ControllerBase
 
         if (await _context.Employees.AnyAsync(e => e.Email == dto.Email))
             return BadRequest(new { message = "Email already in use." });
+
+        // Problem 3: NationalId (Aadhaar/PAN) deduplication
+        if (!string.IsNullOrWhiteSpace(dto.NationalId) &&
+            await _context.Employees.AnyAsync(e => e.NationalId == dto.NationalId))
+            return Conflict(new { message = "An employee with this National ID already exists." });
 
         var emp = MapDtoToEmployee(dto);
         emp.CreatedBy = User.FindFirstValue(ClaimTypes.Email);
@@ -310,6 +316,12 @@ public class EmployeesController : ControllerBase
                 if (await _context.Employees.AnyAsync(e => e.Email == email))
                     throw new InvalidOperationException($"Email '{email}' already in use.");
 
+                // Problem 3: NationalId dedup in bulk import
+                var nationalId = cols.Length > 15 && !string.IsNullOrWhiteSpace(cols[15].Trim())
+                    ? cols[15].Trim() : null;
+                if (nationalId != null && await _context.Employees.AnyAsync(e => e.NationalId == nationalId))
+                    throw new InvalidOperationException($"National ID '{nationalId}' already exists.");
+
                 var emp = new Employee
                 {
                     EmployeeCode = result.EmployeeCode,
@@ -385,6 +397,7 @@ public class EmployeesController : ControllerBase
         City = dto.City,
         PostalCode = dto.PostalCode,
         EmergencyContact = dto.EmergencyContact,
+        NationalId = string.IsNullOrWhiteSpace(dto.NationalId) ? null : dto.NationalId.Trim(),
         ReportsToId = dto.ReportsToId,
     };
 
