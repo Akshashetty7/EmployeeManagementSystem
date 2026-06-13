@@ -1,3 +1,4 @@
+using ClosedXML.Excel;
 using EmsApi.Data;
 using EmsApi.DTOs;
 using EmsApi.Models;
@@ -118,31 +119,14 @@ public class EmployeesController : ControllerBase
         if (await _context.Employees.AnyAsync(e => e.Email == dto.Email))
             return BadRequest(new { message = "Email already in use." });
 
-        var emp = new Employee
-        {
-            EmployeeCode = dto.EmployeeCode,
-            FirstName = dto.FirstName,
-            LastName = dto.LastName,
-            Email = dto.Email,
-            Phone = dto.Phone,
-            Gender = dto.Gender,
-            DateOfBirth = dto.DateOfBirth,
-            JoinDate = dto.JoinDate,
-            JobTitle = dto.JobTitle,
-            DepartmentId = dto.DepartmentId,
-            BaseSalary = dto.BaseSalary,
-            Address = dto.Address,
-            City = dto.City,
-            PostalCode = dto.PostalCode,
-            EmergencyContact = dto.EmergencyContact,
-            ReportsToId = dto.ReportsToId,
-            CreatedBy = User.FindFirstValue(ClaimTypes.Email)
-        };
+        var emp = MapDtoToEmployee(dto);
+        emp.CreatedBy = User.FindFirstValue(ClaimTypes.Email);
 
         _context.Employees.Add(emp);
         await _context.SaveChangesAsync();
 
-        await _audit.LogAsync("Employee", emp.Id, "Create", null, new { emp.EmployeeCode, emp.FirstName, emp.LastName, emp.Email },
+        await _audit.LogAsync("Employee", emp.Id, "Create", null,
+            new { emp.EmployeeCode, emp.FirstName, emp.LastName, emp.Email },
             User.FindFirstValue(ClaimTypes.NameIdentifier)!,
             User.FindFirstValue("fullName") ?? "Unknown",
             HttpContext.Connection.RemoteIpAddress?.ToString(), emp.Id);
@@ -150,13 +134,21 @@ public class EmployeesController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = emp.Id }, new { emp.Id, emp.EmployeeCode, emp.FullName });
     }
 
-    /// <summary>Update employee (Admin / HR / Manager)</summary>
+    /// <summary>Update employee (Admin / HR / Manager — managers restricted to their direct reports)</summary>
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin,HR,Manager")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateEmployeeDto dto)
     {
         var emp = await _context.Employees.FindAsync(id);
         if (emp == null) return NotFound();
+
+        // Managers may only update employees who report directly to them
+        if (User.IsInRole("Manager") && !User.IsInRole("Admin") && !User.IsInRole("HR"))
+        {
+            var managerEmployeeId = User.FindFirstValue("employeeId");
+            if (!int.TryParse(managerEmployeeId, out var mgId) || emp.ReportsToId != mgId)
+                return Forbid();
+        }
 
         var oldSnapshot = new { emp.JobTitle, emp.BaseSalary, emp.Status, emp.DepartmentId };
 
@@ -208,5 +200,208 @@ public class EmployeesController : ControllerBase
             HttpContext.Connection.RemoteIpAddress?.ToString(), emp.Id);
 
         return NoContent();
+    }
+
+    /// <summary>Export all employees to Excel (Admin / HR)</summary>
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin,HR")]
+    public async Task<IActionResult> ExportExcel()
+    {
+        var employees = await _context.Employees
+            .Include(e => e.Department)
+            .Include(e => e.ReportsTo)
+            .OrderBy(e => e.FirstName)
+            .ToListAsync();
+
+        using var workbook = new XLWorkbook();
+        var ws = workbook.Worksheets.Add("Employees");
+
+        var headers = new[]
+        {
+            "Code", "First Name", "Last Name", "Email", "Phone", "Gender",
+            "Date of Birth", "Join Date", "Job Title", "Department",
+            "Salary", "Status", "City", "Reports To"
+        };
+
+        for (var i = 0; i < headers.Length; i++)
+        {
+            ws.Cell(1, i + 1).Value = headers[i];
+            ws.Cell(1, i + 1).Style.Font.Bold = true;
+            ws.Cell(1, i + 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#4472C4");
+            ws.Cell(1, i + 1).Style.Font.FontColor = XLColor.White;
+        }
+
+        for (var row = 0; row < employees.Count; row++)
+        {
+            var e = employees[row];
+            var r = row + 2;
+            ws.Cell(r, 1).Value = e.EmployeeCode;
+            ws.Cell(r, 2).Value = e.FirstName;
+            ws.Cell(r, 3).Value = e.LastName;
+            ws.Cell(r, 4).Value = e.Email;
+            ws.Cell(r, 5).Value = e.Phone ?? "";
+            ws.Cell(r, 6).Value = e.Gender.ToString();
+            ws.Cell(r, 7).Value = e.DateOfBirth.ToString("yyyy-MM-dd");
+            ws.Cell(r, 8).Value = e.JoinDate.ToString("yyyy-MM-dd");
+            ws.Cell(r, 9).Value = e.JobTitle;
+            ws.Cell(r, 10).Value = e.Department?.Name ?? "";
+            ws.Cell(r, 11).Value = e.BaseSalary;
+            ws.Cell(r, 12).Value = e.Status.ToString();
+            ws.Cell(r, 13).Value = e.City ?? "";
+            ws.Cell(r, 14).Value = e.ReportsTo != null ? e.ReportsTo.FullName : "";
+        }
+
+        ws.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+
+        return File(stream.ToArray(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"employees_{DateTime.Now:yyyyMMdd_HHmm}.xlsx");
+    }
+
+    /// <summary>
+    /// Bulk import employees from a CSV file (Admin / HR).
+    /// CSV header row required:
+    /// EmployeeCode,FirstName,LastName,Email,Phone,Gender,DateOfBirth,JoinDate,JobTitle,DepartmentId,BaseSalary,Address,City,PostalCode,EmergencyContact,ReportsToId
+    /// </summary>
+    [HttpPost("import")]
+    [Authorize(Roles = "Admin,HR")]
+    public async Task<IActionResult> ImportCsv(IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { message = "No file uploaded." });
+
+        if (!file.FileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { message = "Only .csv files are accepted." });
+
+        var results = new List<EmployeeImportRow>();
+        var newEmployees = new List<Employee>();
+
+        using var reader = new StreamReader(file.OpenReadStream());
+        var headerLine = await reader.ReadLineAsync();
+        if (headerLine == null)
+            return BadRequest(new { message = "CSV file is empty." });
+
+        var rowNumber = 1;
+        while (!reader.EndOfStream)
+        {
+            rowNumber++;
+            var line = await reader.ReadLineAsync();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var cols = ParseCsvLine(line);
+            var result = new EmployeeImportRow { RowNumber = rowNumber };
+
+            try
+            {
+                if (cols.Length < 11)
+                    throw new FormatException("Row has fewer columns than expected (minimum 11).");
+
+                result.EmployeeCode = cols[0].Trim();
+                result.Name = $"{cols[1].Trim()} {cols[2].Trim()}";
+
+                if (await _context.Employees.AnyAsync(e => e.EmployeeCode == result.EmployeeCode))
+                    throw new InvalidOperationException($"Employee code '{result.EmployeeCode}' already exists.");
+
+                var email = cols[3].Trim();
+                if (await _context.Employees.AnyAsync(e => e.Email == email))
+                    throw new InvalidOperationException($"Email '{email}' already in use.");
+
+                var emp = new Employee
+                {
+                    EmployeeCode = result.EmployeeCode,
+                    FirstName = cols[1].Trim(),
+                    LastName = cols[2].Trim(),
+                    Email = email,
+                    Phone = cols.Length > 4 ? cols[4].Trim() : null,
+                    Gender = Enum.TryParse<Gender>(cols.Length > 5 ? cols[5].Trim() : "Male", out var g) ? g : Gender.Male,
+                    DateOfBirth = DateTime.Parse(cols[6].Trim()),
+                    JoinDate = DateTime.Parse(cols[7].Trim()),
+                    JobTitle = cols[8].Trim(),
+                    DepartmentId = int.Parse(cols[9].Trim()),
+                    BaseSalary = decimal.Parse(cols[10].Trim()),
+                    Address = cols.Length > 11 ? cols[11].Trim() : null,
+                    City = cols.Length > 12 ? cols[12].Trim() : null,
+                    PostalCode = cols.Length > 13 ? cols[13].Trim() : null,
+                    EmergencyContact = cols.Length > 14 ? cols[14].Trim() : null,
+                    ReportsToId = cols.Length > 15 && int.TryParse(cols[15].Trim(), out var rid) ? rid : null,
+                    CreatedBy = User.FindFirstValue(ClaimTypes.Email)
+                };
+
+                newEmployees.Add(emp);
+                result.Status = "Queued";
+            }
+            catch (Exception ex)
+            {
+                result.Status = "Failed";
+                result.Error = ex.Message;
+            }
+
+            results.Add(result);
+        }
+
+        if (newEmployees.Count > 0)
+        {
+            _context.Employees.AddRange(newEmployees);
+            await _context.SaveChangesAsync();
+
+            foreach (var (emp, row) in newEmployees.Zip(results.Where(r => r.Status == "Queued")))
+            {
+                row.Status = "Success";
+                await _audit.LogAsync("Employee", emp.Id, "Create", null,
+                    new { emp.EmployeeCode, emp.Email },
+                    User.FindFirstValue(ClaimTypes.NameIdentifier)!,
+                    User.FindFirstValue("fullName") ?? "Unknown",
+                    HttpContext.Connection.RemoteIpAddress?.ToString(), emp.Id);
+            }
+        }
+
+        return Ok(new
+        {
+            Total = results.Count,
+            Imported = results.Count(r => r.Status == "Success"),
+            Failed = results.Count(r => r.Status == "Failed"),
+            Rows = results
+        });
+    }
+
+    private static Employee MapDtoToEmployee(CreateEmployeeDto dto) => new()
+    {
+        EmployeeCode = dto.EmployeeCode,
+        FirstName = dto.FirstName,
+        LastName = dto.LastName,
+        Email = dto.Email,
+        Phone = dto.Phone,
+        Gender = dto.Gender,
+        DateOfBirth = dto.DateOfBirth,
+        JoinDate = dto.JoinDate,
+        JobTitle = dto.JobTitle,
+        DepartmentId = dto.DepartmentId,
+        BaseSalary = dto.BaseSalary,
+        Address = dto.Address,
+        City = dto.City,
+        PostalCode = dto.PostalCode,
+        EmergencyContact = dto.EmergencyContact,
+        ReportsToId = dto.ReportsToId,
+    };
+
+    // Handles quoted fields with commas inside
+    private static string[] ParseCsvLine(string line)
+    {
+        var fields = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inQuotes = false;
+
+        foreach (var c in line)
+        {
+            if (c == '"') { inQuotes = !inQuotes; }
+            else if (c == ',' && !inQuotes) { fields.Add(current.ToString()); current.Clear(); }
+            else { current.Append(c); }
+        }
+        fields.Add(current.ToString());
+        return fields.ToArray();
     }
 }

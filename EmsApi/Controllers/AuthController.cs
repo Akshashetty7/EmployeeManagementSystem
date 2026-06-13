@@ -1,6 +1,7 @@
 using EmsApi.DTOs;
 using EmsApi.Models;
 using EmsApi.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 
@@ -21,7 +22,7 @@ public class AuthController : ControllerBase
         _tokenService = ts;
     }
 
-    /// <summary>Login and receive a JWT access token</summary>
+    /// <summary>Login and receive a JWT access token + refresh token</summary>
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
@@ -42,6 +43,8 @@ public class AuthController : ControllerBase
         var refreshToken = _tokenService.GenerateRefreshToken();
 
         user.LastLogin = DateTime.UtcNow;
+        user.RefreshToken = refreshToken;
+        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
         await _userManager.UpdateAsync(user);
 
         return Ok(new LoginResponse(
@@ -51,13 +54,59 @@ public class AuthController : ControllerBase
             UserId: user.Id,
             Email: user.Email!,
             FullName: user.FullName,
-            Role: roles.FirstOrDefault() ?? "Employee"
+            Role: roles.FirstOrDefault() ?? "Employee",
+            Roles: roles
         ));
+    }
+
+    /// <summary>Exchange a valid refresh token for a new access + refresh token pair</summary>
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequest request)
+    {
+        var user = _userManager.Users
+            .FirstOrDefault(u => u.RefreshToken == request.RefreshToken);
+
+        if (user == null || user.RefreshTokenExpiry < DateTime.UtcNow)
+            return Unauthorized(new { message = "Invalid or expired refresh token." });
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var newAccessToken = _tokenService.GenerateAccessToken(user, roles);
+        var newRefreshToken = _tokenService.GenerateRefreshToken();
+
+        user.RefreshToken = newRefreshToken;
+        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
+        await _userManager.UpdateAsync(user);
+
+        return Ok(new LoginResponse(
+            Token: newAccessToken,
+            RefreshToken: newRefreshToken,
+            ExpiresAt: DateTime.UtcNow.AddHours(2),
+            UserId: user.Id,
+            Email: user.Email!,
+            FullName: user.FullName,
+            Role: roles.FirstOrDefault() ?? "Employee",
+            Roles: roles
+        ));
+    }
+
+    /// <summary>Revoke refresh token (logout)</summary>
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout()
+    {
+        var user = await _userManager.GetUserAsync(User);
+        if (user != null)
+        {
+            user.RefreshToken = null;
+            user.RefreshTokenExpiry = null;
+            await _userManager.UpdateAsync(user);
+        }
+        return NoContent();
     }
 
     /// <summary>Get current user info (requires valid JWT)</summary>
     [HttpGet("me")]
-    [Microsoft.AspNetCore.Authorization.Authorize]
+    [Authorize]
     public async Task<IActionResult> Me()
     {
         var user = await _userManager.GetUserAsync(User);
@@ -71,7 +120,25 @@ public class AuthController : ControllerBase
             user.FullName,
             user.EmployeeId,
             user.LastLogin,
-            Role = roles.FirstOrDefault()
+            Role = roles.FirstOrDefault(),
+            Roles = roles
         });
     }
+
+    /// <summary>Change password for the current logged-in user</summary>
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        if (user == null) return Unauthorized();
+
+        var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+        if (!result.Succeeded)
+            return BadRequest(new { message = string.Join("; ", result.Errors.Select(e => e.Description)) });
+
+        return Ok(new { message = "Password changed successfully." });
+    }
 }
+
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
