@@ -19,7 +19,7 @@ public static class SeedData
             if (!await roleManager.RoleExistsAsync(role))
                 await roleManager.CreateAsync(new IdentityRole(role));
 
-        if (await context.Departments.AnyAsync()) return;
+        if (await context.Departments.AnyAsync() && await context.Employees.AnyAsync()) return;
 
         // Departments
         var departments = new List<Department>
